@@ -102,11 +102,6 @@
                     },
                     "actions": {
                         "Alert_-_Get_hosts": {
-                            "runAfter": {
-                                "Alert_-_Get_incident": [
-                                    "Succeeded"
-                                ]
-                            },
                             "type": "ApiConnection",
                             "inputs": {
                                 "body": "@triggerBody()?['Entities']",
