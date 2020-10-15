@@ -2,39 +2,158 @@
     "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
+        "workspaceName": {
+            "type": "String",
+            "metadata": {
+                "description": "Workspace name"
+            }
+        },
+        "sku": {
+            "defaultValue": "pergb2018",
+            "allowedValues": [
+                "pergb2018",
+                "Free",
+                "Standalone",
+                "PerNode",
+                "Standard",
+                "Premium"
+            ],
+            "type": "String",
+            "metadata": {
+                "description": "Pricing tier: perGB2018 or legacy tiers (Free, Standalone, PerNode, Standard or Premium), which are not available to all customers."
+            }
+        },
+        "dataRetention": {
+            "defaultValue": 30,
+            "minValue": 7,
+            "maxValue": 730,
+            "type": "Int",
+            "metadata": {
+                "description": "Number of days to retain data."
+            }
+        },
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "String",
+            "metadata": {
+                "description": "Specifies the location in which to create the workspace."
+            }
+        },
+        "automationAccountName": {
+            "type": "String",
+            "metadata": {
+                "description": "Automation account name"
+            }
+        },
+        "automationAccountLocation": {
+            "type": "String",
+            "metadata": {
+                "description": "Specifies the location in which to create the Automation account."
+            }
+        },
+        "samplePython2RunbookName": {
+            "defaultValue": "isolate-and-scaleout",
+            "type": "String"
+        },
+        "samplePython2RunbookDescription": {
+            "defaultValue": "An example runbook that gets all the Resource Manager resources by using the Run As account (service principal).",
+            "type": "String"
+        },
+        "_artifactsLocation": {
+            "defaultValue": "https://raw.githubusercontent.com/s-toyoda/isolate-and-scaleout/master/",
+            "type": "String",
+            "metadata": {
+                "description": "URI to artifacts location"
+            }
+        },
+        "_artifactsLocationSasToken": {
+            "defaultValue": "",
+            "type": "SecureString",
+            "metadata": {
+                "description": "The sasToken required to access _artifactsLocation.  When the template is deployed using the accompanying scripts, a sasToken will be automatically generated"
+            }
+        },
         "PlaybookName": {
-            "defaultValue": "PlaybookName",
-            "type": "string"
+            "defaultValue": "isolate-and-scaleout",
+            "type": "String"
         },
         "UserName": {
             "defaultValue": "<username>@<domain>",
-            "type": "string"
+            "type": "String"
         },
         "AutomationAccount": {
-            "defaultValue": "Name of Azure Automation Account",
-            "type": "string"
+            "defaultValue": "ds2sentinel-auto3",
+            "type": "String"
         }
     },
     "variables": {
         "AzureSentinelConnectionName": "[concat('azuresentinel-', parameters('PlaybookName'))]",
         "AzureAutomationConnectionName": "[concat('azureautomation-', parameters('PlaybookName'))]",
-        "RunBookContentsURI": "https://raw.githubusercontent.com/s-toyoda/isolate-and-scaleout/master/isolate-and-scaleout.py",
         "RunBookName": "isolate-and-scaleout"
     },
     "resources": [
         {
-            "type": "Microsoft.Automation/automationAccounts/runbooks",
-            "apiVersion": "2018-06-30",
-            "name": "[concat(parameters('AutomationAccount'),'/',variables('RunBookName'))]",
-            "location": "[resourceGroup().location]",
+            "type": "Microsoft.OperationalInsights/workspaces",
+            "apiVersion": "2020-08-01",
+            "name": "[parameters('workspaceName')]",
+            "location": "[parameters('location')]",
             "properties": {
-                "runbookType": "Script",
-                "logVerbose": false,
-                "logProgress": false,
-                "logActivityTrace": 0,
-                "publishContentLink": {
-                    "uri": "[variables('RunBookContentsURI')]"
+                "sku": {
+                    "name": "[parameters('sku')]"
+                },
+                "retentionInDays": "[parameters('dataRetention')]",
+                "features": {
+                    "searchVersion": 1,
+                    "legacy": 0
                 }
+            }
+        },
+        {
+            "type": "Microsoft.Automation/automationAccounts",
+            "apiVersion": "2020-01-13-preview",
+            "name": "[parameters('automationAccountName')]",
+            "location": "[parameters('automationAccountLocation')]",
+            "dependsOn": [
+                "[parameters('workspaceName')]"
+            ],
+            "properties": {
+                "sku": {
+                    "name": "Basic"
+                }
+            },
+            "resources": [
+                {
+                    "type": "runbooks",
+                    "apiVersion": "2018-06-30",
+                    "name": "[parameters('samplePython2RunbookName')]",
+                    "location": "[parameters('automationAccountLocation')]",
+                    "dependsOn": [
+                        "[parameters('automationAccountName')]"
+                    ],
+                    "properties": {
+                        "runbookType": "Python2",
+                        "logProgress": "false",
+                        "logVerbose": "false",
+                        "description": "[parameters('samplePython2RunbookDescription')]",
+                        "publishContentLink": {
+                            "uri": "[uri(parameters('_artifactsLocation'), concat('isolate-and-scaleout.py', parameters('_artifactsLocationSasToken')))]",
+                            "version": "1.0.0.0"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.OperationalInsights/workspaces/linkedServices",
+            "apiVersion": "2020-08-01",
+            "name": "[concat(parameters('workspaceName'), '/' , 'Automation')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[parameters('workspaceName')]",
+                "[parameters('automationAccountName')]"
+            ],
+            "properties": {
+                "resourceId": "[resourceId('Microsoft.Automation/automationAccounts', parameters('automationAccountName'))]"
             }
         },
         {
@@ -102,6 +221,7 @@
                     },
                     "actions": {
                         "Alert_-_Get_hosts": {
+                            "runAfter": {},
                             "type": "ApiConnection",
                             "inputs": {
                                 "body": "@triggerBody()?['Entities']",
@@ -123,9 +243,7 @@
                                     "inputs": {
                                         "body": {
                                             "properties": {
-                                                "parameters": {
-                                                    "IPToBeBlocked": "@items('For_each')?['Hosts']"
-                                                }
+                                                "parameters": "@items('For_each')?['Hosts']"
                                             }
                                         },
                                         "host": {
@@ -134,7 +252,7 @@
                                             }
                                         },
                                         "method": "put",
-                                        "path": "/subscriptions/@{encodeURIComponent('23ab6747-a21f-4e9d-ad68-0b0237ad7cd8')}/resourceGroups/@{encodeURIComponent('SecOps')}/providers/Microsoft.Automation/automationAccounts/@{encodeURIComponent('GeneralAutomation')}/jobs",
+                                        "path": "/subscriptions/@{encodeURIComponent(subscription().subscriptionId)}/resourceGroups/@{encodeURIComponent(resourceGroup().name)}/providers/Microsoft.Automation/automationAccounts/@{encodeURIComponent(parameters('automationAccountName'))}/jobs",
                                         "queries": {
                                             "runbookName": "[variables('RunBookName')]",
                                             "wait": false,
@@ -142,6 +260,11 @@
                                         }
                                     }
                                 }
+                            },
+                            "runAfter": {
+                                "Alert_-_Get_hosts": [
+                                    "Succeeded"
+                                ]
                             },
                             "type": "Foreach"
                         }
